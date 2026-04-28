@@ -41,3 +41,13 @@ mysql_data/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Test databases
+test.db
+*.sqlite
+
+# Report files (not part of application)
+*.docx
+
+# IDE settings
+.vscode/

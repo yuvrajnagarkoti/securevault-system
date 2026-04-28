@@ -8,6 +8,14 @@ from abc import ABC, abstractmethod
 from typing import BinaryIO, Optional
 from sqlalchemy.orm import Session
 from app.models import File
+from cryptography.fernet import Fernet
+
+# Use a default key for development, but in production this MUST be an environment variable.
+DEFAULT_ENCRYPTION_KEY = b'QZc4p-w7T2cK2n6j0H1R5Z8q9v3x-F_y6U2p9L3m1N4='
+encryption_key = os.getenv("ENCRYPTION_KEY", DEFAULT_ENCRYPTION_KEY)
+if isinstance(encryption_key, str):
+    encryption_key = encryption_key.encode('utf-8')
+cipher_suite = Fernet(encryption_key)
 
 
 class StorageAdapter(ABC):
@@ -47,12 +55,15 @@ class DatabaseStorageAdapter(StorageAdapter):
         """
         checksum = self._calculate_checksum(file_data)
         
+        # Encrypt data before saving to database
+        encrypted_data = cipher_suite.encrypt(file_data)
+        
         file_record = File(
             filename=file_metadata['filename'],
             size=len(file_data),
             owner_id=file_metadata['owner_id'],
             checksum=checksum,
-            file_data=file_data,
+            file_data=encrypted_data,
             version=file_metadata.get('version', 1)
         )
         
@@ -66,7 +77,7 @@ class DatabaseStorageAdapter(StorageAdapter):
             'size': file_record.size,
             'checksum': file_record.checksum,
             'version': file_record.version,
-            'created_at': file_record.created_at.isoformat()
+            'created_at': file_record.created_at.isoformat() + 'Z'
         }
     
     def retrieve_file(self, file_id: int) -> Optional[bytes]:
@@ -76,10 +87,15 @@ class DatabaseStorageAdapter(StorageAdapter):
             File.is_deleted == 0
         ).first()
         
-        if not file_record:
+        if not file_record or not file_record.file_data:
             return None
-        
-        return file_record.file_data
+            
+        # Decrypt data before returning
+        try:
+            return cipher_suite.decrypt(file_record.file_data)
+        except Exception:
+            # Fallback if the file was saved before encryption was enabled
+            return file_record.file_data
     
     def delete_file(self, file_id: int) -> bool:
         """
@@ -105,7 +121,10 @@ class DatabaseStorageAdapter(StorageAdapter):
         if not file_record:
             return False
         
-        file_record.file_data = file_data
+        # Encrypt new data before saving
+        encrypted_data = cipher_suite.encrypt(file_data)
+        
+        file_record.file_data = encrypted_data
         file_record.size = len(file_data)
         file_record.checksum = self._calculate_checksum(file_data)
         file_record.version += 1

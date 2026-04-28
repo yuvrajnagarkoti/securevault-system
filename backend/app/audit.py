@@ -30,6 +30,7 @@ def log_action(db: Session, user_id: int, action: str, file_id: Optional[int], i
         action=action,
         ip_address=ip_address,
         timestamp=timestamp,
+        details=details,
         signature_hash=signature_hash
     )
     
@@ -62,12 +63,13 @@ def get_audit_logs(db: Session, user_id: Optional[int] = None, action: Optional[
         result.append({
             'log_id': log.log_id,
             'username': log.user.username,
-            'role': log.user.role.value,
+            'role': log.user.role_rel.name if log.user.role_rel else 'Unknown',
             'action': log.action,
             'file_id': log.file_id,
             'filename': log.file.filename if log.file else None,
             'ip_address': log.ip_address,
-            'timestamp': log.timestamp.isoformat(),
+            'timestamp': log.timestamp.isoformat() + 'Z',
+            'details': log.details,
             'signature_hash': log.signature_hash
         })
     
@@ -80,6 +82,8 @@ def verify_log_integrity(log_entry: AuditLog) -> bool:
     Recalculates signature hash and compares with stored value.
     """
     signature_data = f"{log_entry.user_id}:{log_entry.action}:{log_entry.file_id}:{log_entry.ip_address}:{log_entry.timestamp.isoformat()}"
+    if log_entry.details:
+        signature_data += f":{log_entry.details}"
     calculated_hash = hashlib.sha256(signature_data.encode('utf-8')).hexdigest()
     
     return calculated_hash == log_entry.signature_hash
@@ -94,7 +98,7 @@ def export_audit_logs_json(db: Session, user_id: Optional[int] = None,
     logs = get_audit_logs(db, user_id=user_id, action=action, limit=10000)
     
     export_data = {
-        'export_timestamp': datetime.utcnow().isoformat(),
+        'export_timestamp': datetime.utcnow().isoformat() + 'Z',
         'total_logs': len(logs),
         'logs': logs
     }
@@ -119,7 +123,7 @@ def export_audit_logs_csv(db: Session, user_id: Optional[int] = None,
     
     csv_lines = []
     headers = ['log_id', 'username', 'role', 'action', 'file_id', 'filename', 
-               'ip_address', 'timestamp', 'signature_hash']
+               'ip_address', 'timestamp', 'details', 'signature_hash']
     csv_lines.append(','.join(headers))
     
     for log in logs:
@@ -132,6 +136,7 @@ def export_audit_logs_csv(db: Session, user_id: Optional[int] = None,
             str(log.get('filename', '')),
             str(log.get('ip_address', '')),
             str(log.get('timestamp', '')),
+            str(log.get('details', '')),
             str(log.get('signature_hash', ''))
         ]
         csv_lines.append(','.join(row))

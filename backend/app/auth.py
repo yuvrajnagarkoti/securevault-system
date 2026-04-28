@@ -1,6 +1,7 @@
 """
 Authentication and authorization module for SecureVault.
-Handles JWT-based authentication, password hashing, and RBAC middleware.
+Handles JWT-based authentication, password hashing, RBAC middleware,
+and account lockout protection.
 """
 import os
 import re
@@ -11,7 +12,7 @@ from fastapi import HTTPException, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from typing import Optional
-from app.models import User, UserRole
+from app.models import User, Role
 from app.utils import get_db
 
 
@@ -20,6 +21,10 @@ JWT_ALGORITHM = "HS256"
 
 JWT_EXPIRATION_HOURS = 24
 REFRESH_TOKEN_DAYS = 7
+
+# Account lockout configuration
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_DURATION_MINUTES = 15
 
 security = HTTPBearer()
 
@@ -31,14 +36,29 @@ def validate_username(username: str) -> None:
     Requirements:
     - Only alphanumeric characters (letters and numbers)
     - Must not start with a numeric digit
-    - Minimum 3 characters
+    - Minimum 3 characters, maximum 50 characters
+    - No SQL injection patterns
     
     Raises HTTPException if username doesn't meet requirements.
     """
+    if not username or not username.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Username cannot be empty"
+        )
+    
+    username = username.strip()
+    
     if len(username) < 3:
         raise HTTPException(
             status_code=400,
             detail="Username must be at least 3 characters long"
+        )
+    
+    if len(username) > 50:
+        raise HTTPException(
+            status_code=400,
+            detail="Username must be at most 50 characters long"
         )
     
     if not re.match(r'^[a-zA-Z][a-zA-Z0-9]*$', username):
@@ -49,11 +69,32 @@ def validate_username(username: str) -> None:
 
 
 def validate_password_strength(password: str) -> None:
+    """
+    Validate password strength requirements.
+    
+    Requirements:
+    - Minimum 8 characters
+    - At least one uppercase letter
+    - At least one lowercase letter
+    - At least one numeric digit
+    - At least one special character
+    """
+    if not password:
+        raise HTTPException(
+            status_code=400,
+            detail="Password cannot be empty"
+        )
     
     if len(password) < 8:
         raise HTTPException(
             status_code=400, 
             detail="Password must be at least 8 characters long"
+        )
+    
+    if len(password) > 128:
+        raise HTTPException(
+            status_code=400,
+            detail="Password must be at most 128 characters long"
         )
     
     if not re.search(r'[A-Z]', password):
@@ -62,10 +103,22 @@ def validate_password_strength(password: str) -> None:
             detail="Password must contain at least one uppercase letter"
         )
     
+    if not re.search(r'[a-z]', password):
+        raise HTTPException(
+            status_code=400,
+            detail="Password must contain at least one lowercase letter"
+        )
+    
     if not re.search(r'[0-9]', password):
         raise HTTPException(
             status_code=400, 
             detail="Password must contain at least one numeric digit"
+        )
+    
+    if not re.search(r'[!@#$%^&*(),.?":{}|<>_\-+=\[\]\\\/~`]', password):
+        raise HTTPException(
+            status_code=400,
+            detail="Password must contain at least one special character"
         )
 
 
@@ -81,13 +134,13 @@ def verify_password(password: str, password_hash: str) -> bool:
     return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
 
 
-def create_access_token(user_id: int, username: str, role: UserRole) -> str:
+def create_access_token(user_id: int, username: str, role_name: str) -> str:
     """Create a JWT access token for authenticated user."""
     expiration = datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS)
     payload = {
         "user_id": user_id,
         "username": username,
-        "role": role.value,
+        "role": role_name,
         "exp": expiration,
         "iat": datetime.utcnow()
     }
@@ -153,11 +206,58 @@ def require_permission(permission: str):
     return permission_checker
 
 
-def register_user(db: Session, username: str, password: str, role: UserRole = UserRole.USER) -> User:
+def check_account_lockout(user: User) -> None:
+    """
+    Check if a user account is currently locked out.
+    
+    Raises HTTPException with 423 (Locked) status if the account is locked,
+    including the remaining lockout time in the error detail.
+    """
+    if user.locked_until and user.locked_until > datetime.utcnow():
+        remaining = user.locked_until - datetime.utcnow()
+        remaining_minutes = max(1, int(remaining.total_seconds() / 60))
+        raise HTTPException(
+            status_code=423,
+            detail=f"Account is locked due to too many failed login attempts. Try again in {remaining_minutes} minute(s)."
+        )
+
+
+def record_failed_login(db: Session, user: User) -> None:
+    """
+    Record a failed login attempt and lock the account if threshold is reached.
+    
+    Increments failed_attempts counter. If MAX_FAILED_ATTEMPTS is reached,
+    sets locked_until to current time + LOCKOUT_DURATION_MINUTES.
+    """
+    user.failed_attempts = (user.failed_attempts or 0) + 1
+    
+    if user.failed_attempts >= MAX_FAILED_ATTEMPTS:
+        user.locked_until = datetime.utcnow() + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
+    
+    db.commit()
+
+
+def reset_failed_attempts(db: Session, user: User) -> None:
+    """
+    Reset the failed login counter after a successful login.
+    Clears both failed_attempts and locked_until fields.
+    """
+    if user.failed_attempts > 0 or user.locked_until is not None:
+        user.failed_attempts = 0
+        user.locked_until = None
+        db.commit()
+
+
+def register_user(db: Session, username: str, password: str, role_name: str = "Standard User") -> User:
     """Register a new user with username and password validation."""
     existing_user = db.query(User).filter(User.username == username).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Username already exists")
+    
+    # Get Role
+    role = db.query(Role).filter(Role.name == role_name).first()
+    if not role:
+        raise HTTPException(status_code=400, detail=f"Role '{role_name}' not found")
     
     # Validate username
     validate_username(username)
@@ -169,7 +269,9 @@ def register_user(db: Session, username: str, password: str, role: UserRole = Us
     new_user = User(
         username=username,
         password_hash=password_hash,
-        role=role
+        role_id=role.role_id,
+        failed_attempts=0,
+        locked_until=None
     )
     db.add(new_user)
     db.commit()
@@ -178,21 +280,32 @@ def register_user(db: Session, username: str, password: str, role: UserRole = Us
 
 
 def authenticate_user(db: Session, username: str, password: str) -> Optional[User]:
-    """Authenticate user credentials and return user if valid."""
-    # Validate password format before attempting authentication
-    try:
-        validate_password_strength(password)
-    except HTTPException:
-        # If password doesn't meet strength requirements, authentication fails
-        return None
+    """
+    Authenticate user credentials with account lockout protection.
     
+    Flow:
+    1. Look up user by username
+    2. Check if account is locked → raise 423 if locked
+    3. Verify password
+    4. On failure → increment failed_attempts, potentially lock
+    5. On success → reset failed_attempts counter
+    """
     user = db.query(User).filter(User.username == username).first()
     if not user:
+        # Return None for non-existent users (don't reveal user existence)
         return None
     
+    # Check if the account is currently locked out
+    check_account_lockout(user)
+    
+    # Verify password
     if not verify_password(password, user.password_hash):
+        # Record the failed attempt (may trigger lockout)
+        record_failed_login(db, user)
         return None
     
+    # Successful login — reset the counter
+    reset_failed_attempts(db, user)
     return user
 
 

@@ -4,18 +4,22 @@ Defines User, File, and AuditLog tables with relationships.
 """
 from sqlalchemy import Column, Integer, String, ForeignKey, Enum, DateTime, LargeBinary, Text, TIMESTAMP
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, deferred
 from datetime import datetime
-import enum
+from sqlalchemy import JSON
 
 Base = declarative_base()
 
 
-class UserRole(enum.Enum):
-    """User role enumeration for RBAC."""
-    ADMIN = "Admin"
-    MANAGER = "Manager"
-    USER = "Standard User"
+class Role(Base):
+    """Dynamic roles with custom policies."""
+    __tablename__ = 'roles'
+    
+    role_id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(50), unique=True, nullable=False)
+    permissions = Column(JSON, nullable=False)
+    
+    users = relationship("User", back_populates="role_rel")
 
 
 class User(Base):
@@ -25,20 +29,26 @@ class User(Base):
     user_id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String(255), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
-    role = Column(Enum(UserRole, values_callable=lambda x: [e.value for e in x]), nullable=False, default=UserRole.USER)
+    role_id = Column(Integer, ForeignKey('roles.role_id'), nullable=False)
     created_at = Column(TIMESTAMP, nullable=False, default=datetime.utcnow)
+    failed_attempts = Column(Integer, nullable=False, default=0)
+    locked_until = Column(TIMESTAMP, nullable=True, default=None)
     
     files = relationship("File", back_populates="owner")
     audit_logs = relationship("AuditLog", back_populates="user")
+    role_rel = relationship("Role", back_populates="users")
     
     def has_permission(self, action):
         """Check if user has permission for a specific action."""
-        permissions = {
-            UserRole.ADMIN: ["upload", "download", "rename", "delete", "view_logs", "manage_roles"],
-            UserRole.MANAGER: ["upload", "download", "rename", "delete", "view_logs"],
-            UserRole.USER: ["upload", "download"]
-        }
-        return action in permissions.get(self.role, [])
+        if not self.role_rel:
+            return False
+        
+        perms = self.role_rel.permissions
+        if isinstance(perms, dict):
+            return bool(perms.get(action, False))
+        elif isinstance(perms, list):
+            return action in perms
+        return False
 
 
 class File(Base):
@@ -52,7 +62,7 @@ class File(Base):
     version = Column(Integer, nullable=False, default=1)
     created_at = Column(TIMESTAMP, nullable=False, default=datetime.utcnow)
     checksum = Column(String(64), nullable=False)
-    file_data = Column(LargeBinary, nullable=True)
+    file_data = deferred(Column(LargeBinary, nullable=True))
     is_deleted = Column(Integer, nullable=False, default=0)
     
     owner = relationship("User", back_populates="files")
@@ -87,6 +97,7 @@ class AuditLog(Base):
     action = Column(String(50), nullable=False)
     ip_address = Column(String(45), nullable=True)
     timestamp = Column(TIMESTAMP, nullable=False, default=datetime.utcnow)
+    details = Column(Text, nullable=True)
     signature_hash = Column(String(64), nullable=False)
     
     user = relationship("User", back_populates="audit_logs")

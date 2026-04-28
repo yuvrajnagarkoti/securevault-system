@@ -169,9 +169,11 @@ CREATE TABLE file_permissions (
 - Only alphanumeric characters (letters and numbers)
 
 #### Password Validation
-- Minimum 8 characters
+- Minimum 8 characters, maximum 128 characters
 - At least one uppercase letter
+- At least one lowercase letter
 - At least one numeric digit
+- At least one special character (!@#$%^&* etc.)
 
 ### 8. Audit Logging
 

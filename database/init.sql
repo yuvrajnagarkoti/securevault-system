@@ -1,13 +1,30 @@
 -- Database initialization script for SecureVault
 -- Creates all required tables with proper constraints for MySQL
 
+-- Create roles table (Dynamic RBAC)
+CREATE TABLE IF NOT EXISTS roles (
+    role_id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(50) UNIQUE NOT NULL,
+    permissions JSON NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Seed default roles
+INSERT INTO roles (name, permissions) VALUES
+    ('Admin', '["upload", "download", "rename", "delete", "view_logs", "manage_roles"]'),
+    ('Manager', '["upload", "download", "rename", "delete", "view_logs"]'),
+    ('Standard User', '["upload", "download"]')
+ON DUPLICATE KEY UPDATE name=name;
+
 -- Create users table
 CREATE TABLE IF NOT EXISTS users (
     user_id INT AUTO_INCREMENT PRIMARY KEY,
     username VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
-    role ENUM('Admin', 'Manager', 'Standard User') NOT NULL DEFAULT 'Standard User',
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    role_id INT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    failed_attempts INT NOT NULL DEFAULT 0,
+    locked_until TIMESTAMP NULL DEFAULT NULL,
+    FOREIGN KEY (role_id) REFERENCES roles(role_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Create files table
@@ -34,6 +51,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     action VARCHAR(50) NOT NULL,
     ip_address VARCHAR(45),
     timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    details TEXT,
     signature_hash VARCHAR(64) NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
     FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE SET NULL,
@@ -60,10 +78,23 @@ CREATE TABLE IF NOT EXISTS file_permissions (
     INDEX idx_file_permissions_user (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Create default admin users
+-- Create default admin user (role_id=1 = Admin)
 -- Username: Yuvraj, Password: Password123##
--- Hashes generated using bcrypt with default rounds
-INSERT INTO users (username, password_hash, role)
+INSERT INTO users (username, password_hash, role_id)
 VALUES
-    ('Yuvraj', '$2b$12$tt2kxRED7zva90x8.p2YyO38Q3dlWGhwN5Ga4VZU0d/LzPlo8l3e6', 'Admin')
+    ('Yuvraj', '$2b$12$tt2kxRED7zva90x8.p2YyO38Q3dlWGhwN5Ga4VZU0d/LzPlo8l3e6', 1)
 ON DUPLICATE KEY UPDATE username=username;
+
+-- Migration: Add account lockout columns if they don't exist
+-- This handles existing databases that were created before lockout was added
+SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'failed_attempts');
+SET @sql = IF(@col_exists = 0, 'ALTER TABLE users ADD COLUMN failed_attempts INT NOT NULL DEFAULT 0', 'SELECT 1');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'locked_until');
+SET @sql = IF(@col_exists = 0, 'ALTER TABLE users ADD COLUMN locked_until TIMESTAMP NULL DEFAULT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
