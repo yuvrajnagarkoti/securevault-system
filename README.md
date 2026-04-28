@@ -13,6 +13,7 @@
   <a href="#-quick-start"><img src="https://img.shields.io/badge/Quick_Start-🚀-green?style=flat-square" alt="Quick Start"/></a>
   <a href="#-api-reference"><img src="https://img.shields.io/badge/API_Docs-📖-orange?style=flat-square" alt="API Docs"/></a>
   <a href="#-architecture"><img src="https://img.shields.io/badge/Architecture-🏗️-purple?style=flat-square" alt="Architecture"/></a>
+  <a href="CODE_OF_CONDUCT.md"><img src="https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg?style=flat-square" alt="Code of Conduct"/></a>
 </p>
 
 <p align="center">
@@ -21,6 +22,12 @@
   <img src="https://img.shields.io/badge/MySQL-8.0-4479A1?style=flat-square&logo=mysql&logoColor=white" alt="MySQL"/>
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker"/>
   <img src="https://img.shields.io/badge/License-MIT-yellow?style=flat-square" alt="License"/>
+</p>
+
+---
+
+<p align="center">
+  <img src="assets/dashboard_preview.png" alt="SecureVault Dashboard Preview" width="800" style="border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);"/>
 </p>
 
 ---
@@ -179,6 +186,8 @@ docker compose up --build -d
 
 ```
 SecureVault/
+├── assets/
+│   └── dashboard_preview.png    # High-fidelity dashboard mockup
 ├── backend/
 │   ├── app/
 │   │   ├── __init__.py          # Package init
@@ -202,11 +211,19 @@ SecureVault/
 │   └── Dockerfile               # Frontend container image
 ├── database/
 │   └── init.sql                 # Schema bootstrap + default data
+├── .github/
+│   ├── workflows/
+│   │   └── ci.yml               # GitHub Actions CI workflow
+│   ├── ISSUE_TEMPLATE/          # Bug & Feature templates
+│   └── PULL_REQUEST_TEMPLATE.md # PR template
 ├── docker-compose.yml           # Multi-service orchestration
 ├── .env.example                 # Environment variable template
 ├── .gitignore                   # Git exclusion rules
+├── .editorconfig                # Consistent editor formatting
+├── .dockerignore                # Docker build exclusions
 ├── LICENSE                      # MIT License
 ├── CONTRIBUTING.md              # Contribution guidelines
+├── CODE_OF_CONDUCT.md           # Community standards
 ├── SECURITY.md                  # Security policy & disclosure
 ├── CHANGELOG.md                 # Version history
 └── README.md                    # This file
