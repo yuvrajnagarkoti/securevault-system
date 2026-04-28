@@ -1,0 +1,32 @@
+# Docker Ignore — reduces build context size
+
+# Git
+.git
+.gitignore
+
+# Documentation
+README.md
+CONTRIBUTING.md
+SECURITY.md
+CHANGELOG.md
+LICENSE
+ROLE_BASED_ACCESS_CONTROL.md
+
+# GitHub
+.github/
+
+# IDE
+.vscode/
+.idea/
+
+# Environment
+.env
+.env.example
+.editorconfig
+
+# Python environments (backend has its own .dockerignore)
+backend/venv/
+
+# OS files
+.DS_Store
+Thumbs.db
